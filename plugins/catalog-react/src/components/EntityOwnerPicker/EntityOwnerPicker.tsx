@@ -28,7 +28,7 @@ import { makeStyles } from '@material-ui/core/styles';
 import CheckBoxIcon from '@material-ui/icons/CheckBox';
 import CheckBoxOutlineBlankIcon from '@material-ui/icons/CheckBoxOutlineBlank';
 import React, { useEffect, useMemo, useState } from 'react';
-import { useEntityList } from '../../hooks/useEntityListProvider';
+import { useEntityList } from '../../hooks';
 import { EntityOwnerFilter } from '../../filters';
 import { useDebouncedEffect } from '@react-hookz/web';
 import PersonIcon from '@material-ui/icons/Person';
@@ -142,13 +142,25 @@ export const EntityOwnerPicker = (props?: EntityOwnerPickerProps) => {
     queryParamOwners.length ? queryParamOwners : filters.owners?.values ?? [],
   );
 
-  const [{ value, loading }, handleFetch, cache] = useFetchEntities({
+  const [state, handleFetch, cache] = useFetchEntities({
     mode,
     initialSelectedOwnersRefs: selectedOwners,
+    selectedKind: filters.kind?.value,
   });
-  useDebouncedEffect(() => handleFetch({ text }), [text, handleFetch], 250);
+  const { value, loading } = state;
+  useDebouncedEffect(
+    () => {
+      if (handleFetch) {
+        handleFetch({ text });
+      }
+    },
+    [text, handleFetch],
+    250,
+  );
 
-  const availableOwners = value?.items || [];
+  const availableOwners = useMemo(() => {
+    return value?.items || [];
+  }, [value?.items]);
 
   // Set selected owners on query parameter updates; this happens at initial page load and from
   // external updates to the page location.
@@ -166,6 +178,14 @@ export const EntityOwnerPicker = (props?: EntityOwnerPickerProps) => {
         : undefined,
     });
   }, [selectedOwners, updateFilters]);
+
+  useEffect(() => {
+    const ownerSet = new Set(availableOwners.map(e => stringifyEntityRef(e)));
+    const stillValid = selectedOwners.filter(o => ownerSet.has(o));
+    if (stillValid.length !== selectedOwners.length) {
+      setSelectedOwners(stillValid);
+    }
+  }, [availableOwners, selectedOwners]);
 
   if (
     ['user', 'group'].includes(
@@ -191,14 +211,28 @@ export const EntityOwnerPicker = (props?: EntityOwnerPickerProps) => {
           return o === v;
         }}
         getOptionLabel={o => {
-          const entity =
-            typeof o === 'string'
-              ? cache.getEntity(o) ||
-                parseEntityRef(o, {
-                  defaultKind: 'group',
-                  defaultNamespace: 'default',
-                })
-              : o;
+          let entity: Entity;
+          if (typeof o === 'string') {
+            const cachedEntity = cache.getEntity(o);
+            if (cachedEntity) {
+              entity = cachedEntity;
+            } else {
+              const cRef = parseEntityRef(o, {
+                defaultKind: 'group',
+                defaultNamespace: 'default',
+              });
+              entity = {
+                apiVersion: 'backstage.io/v1beta1',
+                kind: cRef.kind,
+                metadata: {
+                  name: cRef.name,
+                  namespace: cRef.namespace,
+                },
+              };
+            }
+          } else {
+            entity = o;
+          }
           return humanizeEntity(entity, humanizeEntityRef(entity));
         }}
         onChange={(_: object, owners) => {
@@ -231,7 +265,7 @@ export const EntityOwnerPicker = (props?: EntityOwnerPickerProps) => {
                 element.scrollHeight - element.clientHeight - element.scrollTop,
               ) < 1;
 
-            if (hasReachedEnd && value?.cursor) {
+            if (hasReachedEnd && value?.cursor && handleFetch) {
               handleFetch({ items: value.items, cursor: value.cursor });
             }
           },

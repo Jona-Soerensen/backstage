@@ -16,15 +16,16 @@
 import { useApi } from '@backstage/core-plugin-api';
 import useAsyncFn from 'react-use/esm/useAsyncFn';
 import { catalogApiRef } from '../../api';
-import { useState } from 'react';
+import { useEffect } from 'react';
 import { Entity, parseEntityRef } from '@backstage/catalog-model';
+import { CombinedRequest, CombinedResponse } from './useFetchEntities';
 
 type FacetsCursor = {
   start: number;
   text: string;
 };
 
-type FacetsEntitiesResponse = {
+export type FacetsEntitiesResponse = {
   items: Entity[];
   cursor?: string;
 };
@@ -41,94 +42,107 @@ type FacetsInitialRequest = {
  * hook, which is also used by EntityOwnerPicker.
  * In this mode, the EntityOwnerPicker won't show detailed information of the owners.
  */
-export function useFacetsEntities({ enabled }: { enabled: boolean }) {
+export function useFacetsEntities({
+  enabled,
+  selectedKind,
+}: {
+  enabled: boolean;
+  selectedKind?: string;
+}) {
   const catalogApi = useApi(catalogApiRef);
 
-  const [facetsPromise] = useState(async () => {
-    if (!enabled) {
-      return [];
-    }
-    const facet = 'relations.ownedBy';
-
-    return catalogApi
-      .getEntityFacets({ facets: [facet] })
-      .then(response =>
-        response.facets[facet]
-          .map(e => e.value)
-          .map(ref => {
-            const { kind, name, namespace } = parseEntityRef(ref);
-            return {
-              apiVersion: 'backstage.io/v1beta1',
-              kind,
-              metadata: { name, namespace },
-            };
-          })
-          .sort(
-            (a, b) =>
-              a.kind.localeCompare(b.kind, 'en-US') ||
-              a.metadata.namespace.localeCompare(
-                b.metadata.namespace,
-                'en-US',
-              ) ||
-              a.metadata.name.localeCompare(b.metadata.name, 'en-US'),
-          ),
-      )
-      .catch(() => []);
-  });
-
-  return useAsyncFn<
+  const [state, doFetch] = useAsyncFn<
     (
-      request: FacetsInitialRequest | FacetsEntitiesResponse,
+      request: CombinedRequest,
       options?: { limit?: number },
-    ) => Promise<FacetsEntitiesResponse>
+    ) => Promise<CombinedResponse>
   >(
     async (request, options) => {
-      const facets = await facetsPromise;
-
-      if (!facets) {
-        return {
-          items: [],
-        };
+      if (!enabled || !selectedKind) {
+        return { items: [] };
       }
 
-      const limit = options?.limit ?? 20;
+      const facet = 'relations.ownedBy';
+      let filterObj: { key: string; values: string[] }[] | undefined;
+      if (selectedKind) {
+        const lower = selectedKind.toLocaleLowerCase('en-US');
+        if (lower === 'group' || lower === 'user') {
+          filterObj = [{ key: 'kind', values: [selectedKind] }];
+        } else {
+          filterObj = undefined;
+        }
+      }
 
-      const { text, start } = decodeCursor(request);
-      const filteredRefs = facets.filter(e => filterEntity(text, e));
-      const end = start + limit;
-      return {
-        items: filteredRefs.slice(0, end),
-        ...encodeCursor({
-          entities: filteredRefs,
-          limit: end,
-          payload: {
-            text,
-            start: end,
-          },
-        }),
-      };
+      try {
+        const response = await catalogApi.getEntityFacets({
+          facets: [facet],
+          filter: filterObj,
+        });
+
+        const rawList = response.facets[facet]?.map(e => e.value) ?? [];
+        const facets = rawList.map(ref => {
+          const { kind, name, namespace } = parseEntityRef(ref);
+          return {
+            apiVersion: 'backstage.io/v1beta1',
+            kind,
+            metadata: { name, namespace },
+          } as Entity;
+        });
+
+        const limit = options?.limit ?? 20;
+        const { text, start } = decodeCursor(request);
+        const filteredRefs = facets.filter(e => filterEntity(text, e));
+
+        const sortedItems = filteredRefs.sort((a, b) => {
+          if (a.kind < b.kind) return -1;
+          if (a.kind > b.kind) return 1;
+          if (a.metadata.namespace && b.metadata.namespace) {
+            if (a.metadata.namespace < b.metadata.namespace) return -1;
+            if (a.metadata.namespace > b.metadata.namespace) return 1;
+          }
+          if (a.metadata.name < b.metadata.name) return -1;
+          if (a.metadata.name > b.metadata.name) return 1;
+          return 0;
+        });
+
+        const end = start + limit;
+        const ret: FacetsEntitiesResponse = {
+          items: sortedItems.slice(0, end),
+          ...encodeCursor({
+            entities: sortedItems,
+            limit: end,
+            payload: { text, start: end },
+          }),
+        };
+        return ret;
+      } catch (err) {
+        return { items: [] } as FacetsEntitiesResponse;
+      }
     },
-    [facetsPromise],
-    { loading: true, value: { items: [] } },
+    [enabled, selectedKind],
+    {
+      loading: true,
+      value: { items: [] },
+    },
   );
+
+  useEffect(() => {
+    if (enabled && selectedKind) {
+      doFetch({ text: '' });
+    }
+  }, [enabled, selectedKind, doFetch]);
+
+  return [state, doFetch] as const;
 }
 
-function decodeCursor(
-  request: FacetsInitialRequest | FacetsEntitiesResponse,
-): FacetsCursor {
-  if (isFacetsResponse(request) && request.cursor) {
-    return JSON.parse(atob(request.cursor));
+function decodeCursor(request: CombinedRequest): FacetsCursor {
+  if ('cursor' in request) {
+    return JSON.parse(atob(request.cursor!));
   }
   return {
     text: (request as FacetsInitialRequest).text || '',
     start: 0,
   };
-}
-
-function isFacetsResponse(
-  request: FacetsInitialRequest | FacetsEntitiesResponse,
-): request is FacetsEntitiesResponse {
-  return !!(request as FacetsEntitiesResponse).cursor;
 }
 
 function encodeCursor({

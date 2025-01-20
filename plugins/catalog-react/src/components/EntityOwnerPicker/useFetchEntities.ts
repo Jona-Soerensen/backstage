@@ -14,30 +14,68 @@
  * limitations under the License.
  */
 import { useRef } from 'react';
-import { useFacetsEntities } from './useFacetsEntities';
-import { useQueryEntities } from './useQueryEntities';
+import { FacetsEntitiesResponse, useFacetsEntities } from './useFacetsEntities';
+import { QueryEntitiesResponse, useQueryEntities } from './useQueryEntities';
 import { Entity, stringifyEntityRef } from '@backstage/catalog-model';
 import { useApi } from '@backstage/core-plugin-api';
 import { catalogApiRef } from '../../api';
 import useAsyncFn from 'react-use/esm/useAsyncFn';
 import { useMountEffect } from '@react-hookz/web';
+import { AsyncState } from 'react-use/esm/useAsync';
+
+export type CombinedResponse = FacetsEntitiesResponse | QueryEntitiesResponse;
+
+export type CombinedRequest =
+  | { text: string }
+  | FacetsEntitiesResponse
+  | QueryEntitiesResponse;
+
+type UseFetchEntitiesState = AsyncState<CombinedResponse>;
+
+type UseFetchEntitiesFn = (
+  request: CombinedRequest,
+  options?: { limit?: number },
+) => Promise<CombinedResponse>;
+
+type OwnersCache = {
+  getEntity: (ref: string) => Entity | undefined;
+  setEntity: (entity: Entity) => void;
+};
+
+type UseFetchEntitiesReturn = [
+  UseFetchEntitiesState,
+  UseFetchEntitiesFn | undefined,
+  OwnersCache,
+];
 
 export function useFetchEntities({
   mode,
   initialSelectedOwnersRefs,
+  selectedKind,
 }: {
   mode: 'owners-only' | 'all';
   initialSelectedOwnersRefs: string[];
-}) {
+  selectedKind?: string;
+}): UseFetchEntitiesReturn {
   const isOwnersOnlyMode = mode === 'owners-only';
-  const queryEntitiesResponse = useQueryEntities();
-  const facetsEntitiesResponse = useFacetsEntities({
+
+  const [facetsState, facetsDoFetch] = useFacetsEntities({
     enabled: isOwnersOnlyMode,
+    selectedKind,
   });
 
-  const [state, handleFetch] = isOwnersOnlyMode
-    ? facetsEntitiesResponse
-    : queryEntitiesResponse;
+  const [queryState, queryDoFetch] = useQueryEntities();
+
+  let state: UseFetchEntitiesState;
+  let handleFetch: UseFetchEntitiesFn | undefined;
+
+  if (isOwnersOnlyMode) {
+    state = facetsState as UseFetchEntitiesState;
+    handleFetch = facetsDoFetch as UseFetchEntitiesFn;
+  } else {
+    state = queryState as UseFetchEntitiesState;
+    handleFetch = queryDoFetch as UseFetchEntitiesFn;
+  }
 
   return [
     state,
@@ -46,7 +84,7 @@ export function useFetchEntities({
       enabled: !isOwnersOnlyMode,
       initialSelectedOwnersRefs,
     }),
-  ] as const;
+  ];
 }
 
 /**

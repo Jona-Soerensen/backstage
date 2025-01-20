@@ -63,9 +63,11 @@ describe('useFacetsEntities', () => {
       facetsFromEntityRefs(entityRefs),
     );
 
-    const { result } = renderHook(() => useFacetsEntities({ enabled: true }));
+    const { result } = renderHook(() =>
+      useFacetsEntities({ enabled: true, selectedKind: 'component' }),
+    );
 
-    result.current[1]({ text: '' });
+    await result.current[1]({ text: '' });
     await waitFor(() => {
       expect(result.current[0]).toEqual({
         value: {
@@ -102,7 +104,9 @@ describe('useFacetsEntities', () => {
       facetsFromEntityRefs(entityRefs),
     );
 
-    const { result } = renderHook(() => useFacetsEntities({ enabled: true }));
+    const { result } = renderHook(() =>
+      useFacetsEntities({ enabled: true, selectedKind: 'component' }),
+    );
 
     result.current[1]({ text: '' });
     await waitFor(() => {
@@ -173,7 +177,9 @@ describe('useFacetsEntities', () => {
       facetsFromEntityRefs(entityRefs),
     );
 
-    const { result } = renderHook(() => useFacetsEntities({ enabled: true }));
+    const { result } = renderHook(() =>
+      useFacetsEntities({ enabled: true, selectedKind: 'component' }),
+    );
 
     result.current[1]({ text: '' }, { limit: 2 });
     await waitFor(() => {
@@ -283,7 +289,9 @@ describe('useFacetsEntities', () => {
       facetsFromEntityRefs(entityRefs),
     );
 
-    const { result } = renderHook(() => useFacetsEntities({ enabled: true }));
+    const { result } = renderHook(() =>
+      useFacetsEntities({ enabled: true, selectedKind: 'component' }),
+    );
 
     result.current[1]({ text: 'der  ' });
 

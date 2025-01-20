@@ -17,37 +17,41 @@ import { useApi } from '@backstage/core-plugin-api';
 import { catalogApiRef } from '../../api';
 import useAsyncFn from 'react-use/esm/useAsyncFn';
 import { Entity } from '@backstage/catalog-model';
+import { CombinedRequest, CombinedResponse } from './useFetchEntities';
 
-type QueryEntitiesResponse = {
+export type QueryEntitiesResponse = {
   items: Entity[];
   cursor?: string;
 };
 
 export function useQueryEntities() {
   const catalogApi = useApi(catalogApiRef);
-  return useAsyncFn(
-    async (
-      request: { text: string } | QueryEntitiesResponse,
-      options?: { limit: number },
-    ): Promise<QueryEntitiesResponse> => {
-      const initialRequest = request as { text: string };
-      const cursorRequest = request as QueryEntitiesResponse;
+
+  return useAsyncFn<
+    (
+      request: CombinedRequest,
+      options?: { limit?: number },
+    ) => Promise<CombinedResponse>
+  >(
+    async (request, options) => {
       const limit = options?.limit ?? 20;
 
-      if (cursorRequest.cursor) {
+      if ('cursor' in request) {
         const response = await catalogApi.queryEntities({
-          cursor: cursorRequest.cursor,
+          cursor: request.cursor,
           limit,
         });
-        return {
+        const ret: QueryEntitiesResponse = {
           cursor: response.pageInfo.nextCursor,
-          items: [...cursorRequest.items, ...response.items],
+          items: [...request.items, ...response.items],
         };
+        return ret;
       }
+      const text = 'text' in request ? request.text : '';
 
       const response = await catalogApi.queryEntities({
         fullTextFilter: {
-          term: initialRequest.text || '',
+          term: text,
           fields: [
             'metadata.name',
             'kind',
@@ -60,12 +64,13 @@ export function useQueryEntities() {
         limit,
       });
 
-      return {
+      const ret: QueryEntitiesResponse = {
         cursor: response.pageInfo.nextCursor,
         items: response.items,
       };
+      return ret;
     },
     [],
-    { loading: true },
+    { loading: true, value: { items: [] } },
   );
 }
